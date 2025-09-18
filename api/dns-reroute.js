@@ -1,62 +1,82 @@
+// /api/dns-reroute.js
+
 export default async function handler(req, res) {
-  // Get original full URL from req
-  const incomingUrl = new URL(req.url, `https://${req.headers.host}`);
-
-  // Replace host and protocol with AdGuard DNS host and https
-  incomingUrl.hostname = 'dns.adguard-dns.com';
-  incomingUrl.protocol = 'https:';
-  incomingUrl.port = ''; // clear any port if present
-
-  // Compose the target URL
-  const targetUrl = incomingUrl.toString();
-
-  // Prepare headers to forward (copy most headers except host)
-  const headers = { ...req.headers };
-  headers.host = 'dns.adguard-dns.com';
-
-  // Remove headers that may cause issues
-  delete headers['content-length'];
-  delete headers['connection'];
-
-  // Prepare fetch options
-  const fetchOptions = {
-    method: req.method,
-    headers,
-  };
-
-  // Forward body if POST
-  if (req.method === 'POST') {
-    const body = await new Promise((resolve, reject) => {
-      const chunks = [];
-      req.on('data', (chunk) => chunks.push(chunk));
-      req.on('end', () => resolve(Buffer.concat(chunks)));
-      req.on('error', reject);
-    });
-    fetchOptions.body = body;
-  }
-
   try {
+    // Build the original full URL from incoming request
+    const incomingUrl = new URL(req.url, `https://${req.headers.host}`);
+
+    // Change hostname to AdGuard DNS
+    incomingUrl.hostname = 'dns.adguard-dns.com';
+    incomingUrl.protocol = 'https:';
+    incomingUrl.port = '';
+
+    const targetUrl = incomingUrl.toString();
+
+    // Prepare headers (copy from request)
+    const headers = { ...req.headers };
+
+    // Override host header to AdGuard DNS
+    headers.host = 'dns.adguard-dns.com';
+
+    // Remove headers that can cause issues in proxy
+    delete headers['content-length'];
+    delete headers['connection'];
+
+    // Handle OPTIONS method for CORS preflight
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Accept');
+      return res.status(204).end();
+    }
+
+    // Prepare fetch options
+    const fetchOptions = {
+      method: req.method,
+      headers,
+    };
+
+    // Forward POST body if present
+    if (req.method === 'POST') {
+      const body = await new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+      });
+      fetchOptions.body = body;
+    }
+
+    // Fetch from AdGuard DNS
     const response = await fetch(targetUrl, fetchOptions);
 
-    // Forward CORS headers so client can access
+    // Forward CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Accept');
 
-    // Forward response status
+    // Forward status code
     res.status(response.status);
 
-    // Forward response headers (except some hop-by-hop headers)
+    // Forward response headers (except hop-by-hop)
     response.headers.forEach((value, key) => {
       if (
-        !['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'upgrade']
-          .includes(key.toLowerCase())
+        ![
+          'transfer-encoding',
+          'connection',
+          'keep-alive',
+          'proxy-authenticate',
+          'proxy-authorization',
+          'te',
+          'trailers',
+          'upgrade',
+        ].includes(key.toLowerCase())
       ) {
         res.setHeader(key, value);
       }
     });
 
-    // Stream response body
+    // Forward response body as buffer
     const buffer = await response.arrayBuffer();
     res.send(Buffer.from(buffer));
   } catch (error) {
