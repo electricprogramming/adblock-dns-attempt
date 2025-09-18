@@ -1,18 +1,26 @@
+// /api/dns-reroute.js
+
 export default async function handler(req, res) {
-  if (req.method !== 'GET' && req.method !== 'POST') {
+  const baseUrl = 'https://dns.adguard-dns.com/dns-query';
+
+  if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'OPTIONS') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const baseUrl = 'https://dns.adguard-dns.com/dns-query';
+  // Handle preflight OPTIONS request for CORS
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    return res.status(204).end();
+  }
 
-  // Compose URL with query parameters for GET requests
+  // Compose target URL
   const urlWithParams = req.method === 'GET' && req.url.includes('?')
     ? `${baseUrl}${req.url.substring(req.url.indexOf('?'))}`
     : baseUrl;
 
-  // Headers forwarding rules:
-  // - Accept: pass or default to application/dns-json
-  // - Content-Type: only forward on POST, ignore on GET to avoid AdGuard errors
+  // Build headers for forwarding request
   const headers = {
     accept: req.headers['accept'] || 'application/dns-json',
   };
@@ -26,11 +34,10 @@ export default async function handler(req, res) {
     headers,
   };
 
-  // For POST, pipe raw body
   if (req.method === 'POST') {
     const body = await new Promise((resolve, reject) => {
       const chunks = [];
-      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('data', chunk => chunks.push(chunk));
       req.on('end', () => resolve(Buffer.concat(chunks)));
       req.on('error', reject);
     });
@@ -40,15 +47,22 @@ export default async function handler(req, res) {
   try {
     const response = await fetch(urlWithParams, fetchOptions);
 
+    // Set CORS headers on the response to client
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+
+    // Forward response status and headers
     res.status(response.status);
     response.headers.forEach((value, key) => {
+      // Skip hop-by-hop headers if necessary
       res.setHeader(key, value);
     });
 
     const buffer = await response.arrayBuffer();
     res.send(Buffer.from(buffer));
-  } catch (error) {
-    console.error('DNS Proxy Error:', error);
-    res.status(500).json({ error: 'Failed to proxy request', details: error.message });
+  } catch (err) {
+    console.error('DNS Proxy Error:', err);
+    res.status(500).json({ error: 'Failed to proxy request', details: err.message });
   }
 }
