@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/:path*", "destination": "/api/dns-reroute" }
+    { "source": "/.*", "destination": "/api/dns-reroute.js" }
   ]
 }
