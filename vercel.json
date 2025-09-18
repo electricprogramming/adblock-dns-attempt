@@ -1,0 +1,6 @@
+{
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/", "destination": "/api/dns-reroute.js" }
+  ]
+}
